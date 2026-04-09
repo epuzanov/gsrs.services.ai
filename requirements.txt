@@ -1,3 +1,3 @@
-langcodes>=3.5
+langcodes[data]>=3.5
 pydantic>=2,<3
 gsrs-model @ git+https://github.com/epuzanov/gsrs.model.git

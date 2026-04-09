@@ -285,6 +285,9 @@ class EmbeddingChunkTests(unittest.TestCase):
         self.assertIn('relationship_summary', sections)
         self.assertIn('atomic_relationship', sections)
         self.assertIn('substantive_note', sections)
+        identifier_texts = [chunk.text for chunk in sections['identifier']]
+        self.assertIn('Primary CAS identifier: 15687-27-1.', identifier_texts)
+        self.assertIn('Primary FDA UNII identifier: WK2XYI10QM.', identifier_texts)
         relationship_groups = {chunk.metadata['group_type'] for chunk in sections['relationship_summary']}
         self.assertIn('salts', relationship_groups)
         self.assertIn('metabolites', relationship_groups)

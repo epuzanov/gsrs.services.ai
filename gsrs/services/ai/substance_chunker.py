@@ -269,7 +269,17 @@ def build_identifier_chunks(substance: Substance) -> list[Chunk]:
         code_system = clean_text(code.codeSystem) or 'unspecified system'
         code_value = clean_text(code.code)
         code_text = clean_text(code.codeText)
-        text = f'Identifier {code_system}: {code_value}.'
+        code_type = clean_text(code.type)
+        code_type_label = ''
+        if code_type:
+            code_type_label = humanize_token(code_type)
+            if code_type.isupper() or '_' in code_type:
+                code_type_label = code_type.replace('_', ' ').lower()
+            code_type_label = code_type_label.capitalize()
+        identifier_label = f'{code_system} identifier'
+        if code_type_label:
+            identifier_label = f'{code_type_label} {identifier_label}'
+        text = f'{identifier_label}: {code_value}.'
         if code_text and code_text != code_value:
             text += f' Code text {code_text}.'
         chunks.append(
