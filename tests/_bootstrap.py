@@ -20,8 +20,10 @@ def prepare_imports() -> None:
     local_gsrs_root = project_root / 'gsrs'
     if local_gsrs_root.exists():
         local_path = str(local_gsrs_root)
-        if local_path not in list(gsrs.__path__):
-            gsrs.__path__.append(local_path)
+        current_paths = list(gsrs.__path__)
+        if local_path in current_paths:
+            current_paths.remove(local_path)
+        gsrs.__path__[:] = [local_path, *current_paths]
 
 
 prepare_imports()
