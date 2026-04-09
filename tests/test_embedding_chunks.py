@@ -116,6 +116,114 @@ class EmbeddingChunkTests(unittest.TestCase):
         self.assert_metadata_contract(chunks)
         self.assertIn('definition_unavailable_note', by_section(chunks))
 
+    def test_core_names_include_display_preferred_official_and_languages(self):
+        payload = base_payload(
+            'concept',
+            uuid='16161616-1616-1616-1616-161616161616',
+            name='Display Name',
+            approval_id='NAMES-1',
+        )
+        payload['names'] = [
+            {
+                'name': 'Display Name',
+                'type': 'cn',
+                'displayName': True,
+                'languages': ['en'],
+            },
+            {
+                'name': 'Preferred Name',
+                'type': 'cn',
+                'preferred': True,
+                'languages': ['de'],
+            },
+            {
+                'name': 'Official Name',
+                'type': 'of',
+                'languages': ['fr'],
+            },
+            {
+                'name': 'Extra Alias',
+                'type': 'sys',
+                'languages': ['es'],
+            },
+        ]
+
+        chunks = SubstanceChunker().chunk(Substance.model_validate(payload))
+        sections = by_section(chunks)
+        core_names = sections['core_names'][0]
+        sys_batches = [chunk for chunk in sections['name_batch'] if chunk.metadata.get('name_type') == 'sys']
+
+        self.assertIn('Display Name [en] (display, cn)', core_names.text)
+        self.assertIn('Preferred Name [de] (preferred, cn)', core_names.text)
+        self.assertIn('Official Name [fr] (of)', core_names.text)
+        self.assertNotIn('Extra Alias [es] (sys)', core_names.text)
+        self.assertIn('Display Name', core_names.metadata['exact_match_terms'])
+        self.assertIn('Preferred Name', core_names.metadata['exact_match_terms'])
+        self.assertIn('Official Name', core_names.metadata['exact_match_terms'])
+        self.assertNotIn('Extra Alias', core_names.metadata['exact_match_terms'])
+        self.assertEqual(len(sys_batches), 1)
+        self.assertIn('Extra Alias', sys_batches[0].text)
+        self.assertNotIn('Extra Alias [es]', sys_batches[0].text)
+
+    def test_name_batches_group_by_type_and_language_and_enrich_official_names_with_orgs(self):
+        payload = base_payload(
+            'concept',
+            uuid='17171717-1717-1717-1717-171717171717',
+            name='Batch Concept',
+            approval_id='BATCH-1',
+        )
+        payload['names'] = [
+            {
+                'name': 'Official English One',
+                'type': 'of',
+                'languages': ['en'],
+                'nameOrgs': [{'nameOrg': 'USAN'}],
+            },
+            {
+                'name': 'Official English Two',
+                'type': 'of',
+                'languages': ['en'],
+                'nameOrgs': [{'nameOrg': 'INN'}],
+            },
+            {
+                'name': 'Official French',
+                'type': 'of',
+                'languages': ['fr'],
+                'nameOrgs': [{'nameOrg': 'EDQM'}],
+            },
+            {
+                'name': 'Systematic English',
+                'type': 'sys',
+                'languages': ['en', 'de'],
+            },
+        ]
+
+        chunks = SubstanceChunker().chunk(Substance.model_validate(payload))
+        batches = by_section(chunks)['name_batch']
+        official_en = next(chunk for chunk in batches if chunk.metadata.get('name_type') == 'of' and chunk.metadata.get('languages') == ['en'])
+        official_fr = next(chunk for chunk in batches if chunk.metadata.get('name_type') == 'of' and chunk.metadata.get('languages') == ['fr'])
+        sys_en = next(chunk for chunk in batches if chunk.metadata.get('name_type') == 'sys' and chunk.metadata.get('languages') == ['en'])
+        sys_de = next(chunk for chunk in batches if chunk.metadata.get('name_type') == 'sys' and chunk.metadata.get('languages') == ['de'])
+
+        self.assertTrue(official_en.text.startswith('English official names:'))
+        self.assertIn('Official English One (namingOrg: USAN)', official_en.text)
+        self.assertIn('Official English Two (namingOrg: INN)', official_en.text)
+        self.assertIn('Details: name organizations USAN, INN.', official_en.text)
+        self.assertEqual(official_en.metadata['name_orgs'], ['USAN', 'INN'])
+        self.assertTrue(official_fr.text.startswith('French official names:'))
+        self.assertIn('Official French (namingOrg: EDQM)', official_fr.text)
+        self.assertEqual(official_fr.metadata['languages'], ['fr'])
+        self.assertTrue(sys_en.text.startswith('English systematic names:'))
+        self.assertIn('Systematic English', sys_en.text)
+        self.assertEqual(sys_en.metadata['languages'], ['en'])
+        self.assertTrue(sys_de.text.startswith('German systematic names:'))
+        self.assertIn('Systematic English', sys_de.text)
+        self.assertEqual(sys_de.metadata['languages'], ['de'])
+        self.assertNotIn('[en]', official_en.text)
+        self.assertNotIn('[fr]', official_fr.text)
+        self.assertNotIn('[en]', sys_en.text)
+        self.assertNotIn('[de]', sys_de.text)
+
     def test_chemical_chunking_supports_identifiers_classifications_and_relationship_groups(self):
         payload = base_payload(
             'chemical',

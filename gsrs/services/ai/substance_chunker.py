@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import asdict
 from typing import Any, Callable
+from langcodes import Language
 
 from gsrs.model import Relationship, Substance
 
@@ -111,12 +112,32 @@ def build_core_names_chunk(substance: Substance) -> list[Chunk]:
     names = sorted(list(substance.names or []), key=name_priority)
     if not names:
         return []
-    selected = names[:8]
+    non_systematic_names = [name for name in names if clean_text(getattr(name, 'type', None)).lower() != 'sys']
+    candidate_names = non_systematic_names or names
+    selected: list[Any] = []
+    required_names: list[Any] = []
+    for predicate in (
+        lambda item: bool(getattr(item, 'displayName', False)),
+        lambda item: bool(getattr(item, 'preferred', False)),
+        lambda item: clean_text(getattr(item, 'type', None)).lower() == 'of',
+    ):
+        match = next((name for name in candidate_names if predicate(name)), None)
+        if match is not None and match not in required_names:
+            required_names.append(match)
+    selected.extend(required_names)
+    for name in candidate_names:
+        if name not in selected:
+            selected.append(name)
+        if len(selected) >= 8:
+            break
     labels: list[str] = []
     exact_terms: list[str] = []
     for name in selected:
         raw_name = clean_text(name.name)
         label = shorten_name(raw_name)
+        languages = unique_texts(name.languages or [])
+        if languages:
+            label = f"{label} [{'|'.join(languages)}]"
         roles: list[str] = []
         if getattr(name, 'displayName', False):
             roles.append('display')
@@ -148,39 +169,66 @@ def build_core_names_chunk(substance: Substance) -> list[Chunk]:
 
 
 def build_name_batches(substance: Substance, batch_size: int = 30) -> list[Chunk]:
-    grouped: dict[tuple[str, str, str], list[Any]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for name in sorted(list(substance.names or []), key=name_priority):
-        group_key = (
-            clean_text(name.type) or 'unspecified',
-            '|'.join(unique_texts(getattr(org, 'nameOrg', None) for org in (name.nameOrgs or []))) or 'unspecified',
-            '|'.join(unique_texts(name.domains or [])) or 'unspecified',
-        )
-        grouped[group_key].append(name)
+        languages = unique_texts(name.languages or []) or ['unspecified']
+        for language in languages:
+            group_key = (
+                clean_text(name.type) or 'unspecified',
+                language,
+            )
+            grouped[group_key].append(name)
     chunks: list[Chunk] = []
     batch_counter = 0
     for group_key in sorted(grouped):
-        name_type, name_orgs, domains = group_key
+        name_type, languages = group_key
         values = grouped[group_key]
         for start in range(0, len(values), batch_size):
             batch_counter += 1
             batch = values[start : start + batch_size]
-            labels = [shorten_name(name.name) for name in batch]
-            exact_terms = [clean_text(name.name) for name in batch]
-            text = f'Name batch {batch_counter}: {oxford_join(labels)}.'
+            labels: list[str] = []
+            exact_terms: list[str] = []
+            name_orgs: list[str] = []
+            domains: list[str] = []
+            for name in batch:
+                label = shorten_name(name.name)
+                item_type = clean_text(name.type).lower()
+                if item_type == 'of':
+                    item_orgs = unique_texts(getattr(org, 'nameOrg', None) for org in (name.nameOrgs or []))
+                    if item_orgs:
+                        label = f"{label} (namingOrg: {', '.join(item_orgs)})"
+                        for org in item_orgs:
+                            if org not in name_orgs:
+                                name_orgs.append(org)
+                for domain in unique_texts(name.domains or []):
+                    if domain not in domains:
+                        domains.append(domain)
+                labels.append(label)
+                exact_terms.append(clean_text(name.name))
+            name_type_label_map = {
+                'of': 'official names',
+                'sys': 'systematic names',
+                'sci': 'scientific names',
+                'cn': 'common names',
+                'bn': 'brand names',
+                'cd': 'code',
+                'syn': 'synonyms',
+            }
+            language_label = _language_label(languages)
+            type_label = name_type_label_map.get(name_type.lower(), f'{name_type} names' if name_type != 'unspecified' else 'names')
+            text = f'{language_label} {type_label}: {oxford_join(labels)}.'
             details: list[str] = []
-            if name_type != 'unspecified':
-                details.append(f'type {name_type}')
-            if name_orgs != 'unspecified':
-                details.append(f'name organizations {name_orgs}')
-            if domains != 'unspecified':
-                details.append(f'domains {domains}')
+            if name_orgs:
+                details.append(f"name organizations {', '.join(name_orgs)}")
+            if domains:
+                details.append(f"domains {', '.join(domains)}")
             if details:
-                text += ' Grouped by ' + ', '.join(details) + '.'
+                text += ' Details: ' + ', '.join(details) + '.'
             chunks.append(
                 build_chunk(
                     substance,
                     section='name_batch',
-                    key=f'{batch_counter}_{name_type}_{name_orgs}_{domains}',
+                    key=f'{batch_counter}_{name_type}_{languages}',
                     text=text,
                     chunk_role='section_summary',
                     entity_type='name',
@@ -191,13 +239,27 @@ def build_name_batches(substance: Substance, batch_size: int = 30) -> list[Chunk
                     rank_hint=11,
                     metadata={
                         'name_type': None if name_type == 'unspecified' else name_type,
-                        'name_orgs': None if name_orgs == 'unspecified' else name_orgs.split('|'),
-                        'domains': None if domains == 'unspecified' else domains.split('|'),
+                        'languages': None if languages == 'unspecified' else languages.split('|'),
+                        'name_orgs': name_orgs or None,
+                        'domains': domains or None,
                         'name_count': len(batch),
                     },
                 )
             )
     return chunks
+
+
+def _language_label(language_code: str) -> str:
+    if language_code == 'unspecified':
+        return 'Unspecified language'
+    if Language is not None:
+        try:
+            label = clean_text(Language.get(language_code).display_name())
+            if label:
+                return label
+        except Exception:
+            pass
+    return language_code.upper() if len(language_code) <= 3 else language_code.title()
 
 
 def build_identifier_chunks(substance: Substance) -> list[Chunk]:
