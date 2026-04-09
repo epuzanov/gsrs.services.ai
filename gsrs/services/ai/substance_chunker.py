@@ -295,7 +295,7 @@ def build_identifier_chunks(substance: Substance) -> list[Chunk]:
                 hierarchy=['codes', 'identifiers'],
                 references=resolve_references(substance, code.references),
                 exact_match_terms=unique_texts([code_system, code_value, code_text, code.type]),
-                rank_hint=12,
+                rank_hint=9 if code_type.upper() == 'PRIMARY' else 12,
                 metadata={
                     'code_system': code_system,
                     'code': code_value,

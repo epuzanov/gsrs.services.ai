@@ -569,6 +569,27 @@ class EmbeddingChunkTests(unittest.TestCase):
             [(chunk.chunk_id, chunk.section, chunk.text) for chunk in second],
         )
 
+    def test_primary_identifiers_are_ranked_ahead_of_non_primary_identifiers(self):
+        payload = base_payload(
+            'concept',
+            uuid='18181818-1818-1818-1818-181818181818',
+            name='Identifier Ranking Concept',
+            approval_id='RANK-1',
+        )
+        payload['codes'] = [
+            {'code': 'ALT-123', 'codeSystem': 'LOCAL', 'type': 'ALTERNATIVE'},
+            {'code': 'PRI-999', 'codeSystem': 'FDA UNII', 'type': 'PRIMARY'},
+        ]
+
+        chunks = SubstanceChunker().chunk(Substance.model_validate(payload))
+        identifier_chunks = [chunk for chunk in chunks if chunk.section == 'identifier']
+
+        self.assertEqual(len(identifier_chunks), 2)
+        self.assertEqual(identifier_chunks[0].metadata['code_type'], 'PRIMARY')
+        self.assertEqual(identifier_chunks[0].metadata['rank_hint'], 9)
+        self.assertEqual(identifier_chunks[1].metadata['code_type'], 'ALTERNATIVE')
+        self.assertEqual(identifier_chunks[1].metadata['rank_hint'], 12)
+
 
 if __name__ == '__main__':
     unittest.main()
